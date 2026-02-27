@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.15);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.3);
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-xl;
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-200
+      hover:bg-slate-800/70 hover:border-slate-600/50
+      hover:shadow-lg hover:shadow-violet-500/5;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent;
+  }
+
+  .stat-value {
+    @apply text-2xl font-bold font-mono tracking-tight;
+  }
+
+  .input-field {
+    @apply w-full bg-slate-800/80 border border-slate-700/60 rounded-lg
+      px-4 py-2.5 text-sm text-slate-200 placeholder:text-slate-500
+      focus:outline-none focus:ring-2 focus:ring-violet-500/40
+      focus:border-violet-500/40 transition-all;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5
+      bg-violet-600 hover:bg-violet-500 text-white font-medium
+      rounded-lg transition-all duration-200 focus:outline-none
+      focus:ring-2 focus:ring-violet-500/50 disabled:opacity-50
+      disabled:cursor-not-allowed text-sm;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center gap-2 px-3 py-2 text-slate-400
+      hover:text-slate-200 hover:bg-slate-800/60 rounded-lg
+      transition-all duration-200 text-sm;
+  }
+
+  .select-field {
+    @apply bg-slate-800/80 border border-slate-700/60 rounded-lg
+      px-3 py-2.5 text-sm text-slate-200 focus:outline-none
+      focus:ring-2 focus:ring-violet-500/40 transition-all
+      appearance-none cursor-pointer;
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "whr-system-tooling",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "admin:install": "npm --prefix admin\\\\backend install",
+    "cpp:build": "cmake -S . -B build && cmake --build build --config Debug",
+    "sim:generate": "build\\\\bin\\\\whr_simulate.exe --db data\\\\whr_simulation.sqlite --players 100 --matches 12000 --seed 20260209",
+    "sim:recalc": "build\\\\bin\\\\whr_recalc.exe --db data\\\\whr_simulation.sqlite --full",
+    "admin:backend": "npm --prefix admin\\\\backend run dev",
+    "admin:frontend:install": "npm --prefix admin\\\\frontend install",
+    "admin:frontend": "npm --prefix admin\\\\frontend run dev",
+    "admin:smoke": "npm --prefix admin\\\\backend run smoke"
+  }
+}
