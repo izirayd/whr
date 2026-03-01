@@ -1,6 +1,7 @@
 #include <whr/engine.hpp>
 #include <whr/math.hpp>
 
+#include <chrono>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
@@ -92,12 +93,19 @@ void validate_three_participants_used(
   }
 }
 
+void print_rating_benchmark(std::size_t from_step, std::size_t to_step, double elapsed_ms) {
+  std::cout << "[benchmark] " << from_step << " -> " << to_step << " rating update: "
+            << std::fixed << std::setprecision(3) << elapsed_ms << " ms\n";
+}
+
 [[nodiscard]] std::vector<Snapshot> play_duel_series(
     const std::vector<DuelMatch>& duels,
     whr::PlayerId player_a,
     whr::PlayerId player_b,
     whr::PlayerId player_c,
-    const whr::WhrConfig& cfg) {
+    const whr::WhrConfig& cfg,
+    std::size_t benchmark_step_interval = 0,
+    std::size_t benchmark_match_limit = 0) {
   validate_three_participants_used(duels, player_a, player_b, player_c);
 
   whr::WhrEngine engine(cfg);
@@ -115,6 +123,18 @@ void validate_three_participants_used(
 
   for (std::size_t i = 0; i < duels.size(); ++i) {
     const DuelMatch& duel = duels[i];
+    const std::size_t step = i + 1;
+    const bool should_benchmark_step =
+        benchmark_step_interval != 0 &&
+        step > benchmark_step_interval &&
+        (step - 1) % benchmark_step_interval == 0 &&
+        step <= benchmark_match_limit + 1;
+    std::chrono::high_resolution_clock::time_point benchmark_start;
+
+    if (should_benchmark_step) {
+      benchmark_start = std::chrono::high_resolution_clock::now();
+    }
+
     validate_duel(duel, player_a, player_b, player_c);
 
     whr::Match match;
@@ -126,8 +146,17 @@ void validate_three_participants_used(
         match.sides[0].players, match.sides[1].players, duel.time);
     const whr::MatchId match_id = engine.add_match(match);
     engine.incremental_update_for_match(match_id);
-    // Keep sandbox output intuitive by re-fitting full history after each duel.
-    engine.optimize_all(8, 1e-6);
+    // Keep sandbox output intuitive while keeping per-step latency lower:
+    // optimize only recent participants and a recent rating-window.
+    engine.optimize_windowed(256, 64, 8, 1e-6);
+
+    if (should_benchmark_step) {
+      const auto benchmark_end = std::chrono::high_resolution_clock::now();
+      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::duration<double, std::milli>>(
+                                  benchmark_end - benchmark_start)
+                                  .count();
+      print_rating_benchmark(step - 1, step, elapsed_ms);
+    }
 
     Snapshot row;
     row.step = i + 1;
@@ -190,20 +219,44 @@ int main() {
   cfg.prior_games = 3.0;
   cfg.max_newton_step_r = whr::elo_to_r(150.0);
 
-  const std::vector<DuelMatch> duels = {
-      {1, player_a, player_b, player_a},
-      {2, player_a, player_b, player_a},
-      {3, player_a, player_b, player_a},
-      {4, player_a, player_b, player_a},
-      {5, player_c, player_a, player_c},
-      {6, player_c, player_a, player_c},
-      {7, player_c, player_a, player_c},
-      {8, player_c, player_a, player_c},
-      {9, player_c, player_b, player_b},
-      {10, player_c, player_b, player_b},
+  int i = 0;
+  std::vector<DuelMatch> duels = {
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_b, player_a},
+      {i++, player_a, player_c, player_a},
   };
 
-  const auto timeline = play_duel_series(duels, player_a, player_b, player_c, cfg);
+
+  for (size_t wi = 0; wi < 50000; wi++)
+  {
+      duels.push_back({ i++, player_a, player_b, player_a });
+  }
+
+  constexpr std::size_t kBenchmarkStep = 10000;
+  constexpr std::size_t kBenchmarkMatchLimit = 50000;
+  const auto timeline = play_duel_series(
+      duels,
+      player_a,
+      player_b,
+      player_c,
+      cfg,
+      kBenchmarkStep,
+      kBenchmarkMatchLimit);
 
   std::cout << "Three-player WHR debug sandbox (1v1 mode)\n";
   std::cout << "Player A id: " << player_a

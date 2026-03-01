@@ -78,6 +78,68 @@ public:
     incremental_matches_since_uncertainty_ = 0;
   }
 
+  // Windowed optimization for low-latency streaming:
+  // 1) only players that appeared in the last `recent_match_window` matches;
+  // 2) for each player, only the last `player_history_window` timeline nodes are optimized.
+  void optimize_windowed(
+      std::size_t recent_match_window,
+      std::size_t player_history_window,
+      std::size_t iterations = 0,
+      double epsilon = -1.0,
+      bool refresh_uncertainty = false) {
+    if (matches_.empty() || recent_match_window == 0 || player_history_window == 0) {
+      return;
+    }
+
+    if (iterations == 0) iterations = cfg_.default_optimize_iterations;
+    if (epsilon < 0.0) epsilon = cfg_.default_convergence_epsilon;
+
+    const std::size_t recent_from =
+        (recent_match_window >= matches_.size()) ? 0u : matches_.size() - recent_match_window;
+
+    std::vector<PlayerId> active_players;
+    for (std::size_t i = recent_from; i < matches_.size(); ++i) {
+      const Match& m = matches_[i];
+      for (const Side& s : m.sides) {
+        for (PlayerId p : s.players) {
+          active_players.push_back(p);
+        }
+      }
+    }
+
+    if (active_players.empty()) return;
+
+    std::sort(active_players.begin(), active_players.end());
+    active_players.erase(std::unique(active_players.begin(), active_players.end()), active_players.end());
+
+    const std::size_t history_window = (player_history_window == 0) ? 1 : player_history_window;
+    for (std::size_t it = 0; it < iterations; ++it) {
+      double max_delta = 0.0;
+      for (PlayerId p : active_players) {
+        auto itp = players_.find(p);
+        if (itp == players_.end()) continue;
+
+        PlayerHistory& hist = itp->second;
+        const std::size_t n = hist.size();
+        if (n == 0) continue;
+
+        const std::size_t begin = (n > history_window) ? (n - history_window) : 0u;
+        const std::size_t end = n - 1;
+        max_delta = (std::max)(max_delta, newton_update_player_window_(hist, begin, end));
+      }
+      if (max_delta < epsilon) break;
+    }
+
+    if (!refresh_uncertainty) {
+      return;
+    }
+
+    for (PlayerId p : active_players) {
+      recompute_uncertainty_for_player_(p);
+    }
+    incremental_matches_since_uncertainty_ = 0;
+  }
+
   // Fast incremental update after adding a new match:
   // applies local Newton steps over a small recent window for each participant.
   void incremental_update_for_match(MatchId match_id) {
@@ -269,6 +331,78 @@ private:
     const std::size_t idx = hist.find_time_index(time);
     if (idx == PlayerHistory::npos()) return 0.0;
     return local_newton_update_player_at_index_(hist, idx);
+  }
+
+  double newton_update_player_window_(
+      PlayerHistory& hist,
+      std::size_t begin_idx,
+      std::size_t end_idx) {
+    const std::size_t n = hist.size();
+    if (n == 0 || begin_idx > end_idx || end_idx >= n) return 0.0;
+
+    const std::size_t local_n = end_idx - begin_idx + 1u;
+    std::vector<double> diag(local_n);
+    std::vector<double> grad(local_n);
+    std::vector<double> off;
+    if (local_n > 1) off.assign(local_n - 1, 0.0);
+
+    const double w2 = cfg_.w2_r();
+    constexpr double kMinSigma2 = 1e-12;
+
+    for (std::size_t gi = begin_idx; gi <= end_idx; ++gi) {
+      const std::size_t li = gi - begin_idx;
+
+      const whr::detail::LikelihoodTermAtTime term =
+          whr::detail::compute_likelihood_term_at_time_index(
+              hist,
+              gi,
+              cfg_.prior_games,
+              [&](MatchId id) -> const Match& { return match(id); },
+              [&](PlayerId pid, TimePoint t) -> NaturalRating { return rating_r_exact_(pid, t); });
+
+      double local_diag = term.hess_diag - cfg_.hessian_diag_stability;
+      double local_grad = term.grad;
+
+      if (gi > 0) {
+        const double dt = static_cast<double>(hist.times[gi] - hist.times[gi - 1]);
+        double sigma2 = dt * w2;
+        if (sigma2 < kMinSigma2) sigma2 = kMinSigma2;
+        const double inv = 1.0 / sigma2;
+        local_diag -= inv;
+        local_grad += -(hist.r[gi] - hist.r[gi - 1]) * inv;
+        if (gi > begin_idx) {
+          off[li - 1] = inv;
+        }
+      }
+
+      if (gi + 1 < n) {
+        const double dt = static_cast<double>(hist.times[gi + 1] - hist.times[gi]);
+        double sigma2 = dt * w2;
+        if (sigma2 < kMinSigma2) sigma2 = kMinSigma2;
+        const double inv = 1.0 / sigma2;
+        local_diag -= inv;
+        local_grad += -(hist.r[gi] - hist.r[gi + 1]) * inv;
+        if (gi < end_idx) {
+          off[li] = inv;
+        }
+      }
+
+      diag[li] = local_diag;
+      grad[li] = local_grad;
+    }
+
+    const std::vector<double> delta = whr::detail::solve_tridiagonal_symmetric(diag, off, grad);
+
+    const double max_step = cfg_.max_newton_step_r;
+    double max_abs = 0.0;
+    for (std::size_t li = 0; li < local_n; ++li) {
+      double d = delta[li];
+      if (d > max_step) d = max_step;
+      if (d < -max_step) d = -max_step;
+      hist.r[begin_idx + li] -= d;
+      max_abs = (std::max)(max_abs, std::abs(d));
+    }
+    return max_abs;
   }
 
   // Computes one Newton update for player p, returns max |Δ| applied (natural units).
